@@ -1,0 +1,249 @@
+---
+title: 'Final Project: Bike Allocation'
+author: "Ishita Agrawal"
+date: "2024-06-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Collecting and Preparing Data
+
+### 1. Loading and Knowing the Data
+
+```{r}
+
+library(e1071)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+library(caret)
+library(data.table)
+library(car)
+
+setwd("C:/Users/admin/Desktop/depaul/fundamentals/final group project")
+
+data <- read.csv("citibikeDemand.csv")
+
+dim(data)
+colnames(data)
+head(data)
+tail(data)
+str(data)
+
+data$DemandDate <- as.Date(data$DemandDate, format = "%m/%d/%Y")
+data$DemandTime <- as.factor(data$DemandTime)
+data$DayOfWeek <- as.factor(data$DayOfWeek)
+#Monday = 1 and Sunday = 7
+```
+
+### 2. Summary Statistics
+
+```{r}
+
+summary(data[c("TripDurationMinutes", "StartPerCapitaIncome", "EndPerCapitaIncome", "StartPctHouseholdsNoVehicle", "EndPctHouseholdsNoVehicle")])
+
+summary(data)
+```
+
+### 4. Handeling Missing Data
+
+```{r}
+
+# Remove rows with missing values
+data_clean <- data %>%
+  mutate(across(everything(), ~ifelse(is.na(.), mean(., na.rm = TRUE), .)))
+
+# View the cleaned data
+summary(data_clean)
+
+# Convert 'DemandDate' to Date type if it's not already
+data_clean$DemandDate <- as.Date(data_clean$DemandDate)
+```
+
+## 2. Descriptive Analysis: Identify Demand Patterns
+
+### 1. Univariate Descriptive Analysis
+
+```{r univariate analysis}
+
+# Mean and Standard Deviation
+mean_demand <- mean(data_clean$Demand, na.rm = TRUE)
+sd_demand <- sd(data_clean$Demand, na.rm = TRUE)
+
+# Skewness and Kurtosis
+skewness_demand <- skewness(data_clean$Demand, na.rm = TRUE)
+kurtosis_demand <- kurtosis(data_clean$Demand, na.rm = TRUE)
+
+cat("Mean of Demand:", mean_demand, "\n")
+cat("Standard Deviation of Demand:", sd_demand, "\n")
+cat("Skewness of Demand:", skewness_demand, "\n")
+cat("Kurtosis of Demand:", kurtosis_demand, "\n")
+```
+
+### 2. Bivariate Analysis
+
+```{r Bivariate Analysis}
+
+correlation <- cor(data_clean$Demand, data_clean$Temperature, use = "complete.obs")
+
+# Covariance
+covariance <- cov(data_clean$Demand, data_clean$Temperature, use = "complete.obs")
+
+cat("Correlation between Demand and Temperature:", correlation, "\n")
+cat("Covariance between Demand and Temperature:", covariance, "\n")
+
+# Summarize demand by day of the week
+demand_summary <- data_clean %>%
+  group_by(DayOfWeek) %>%
+  summarize(
+    MeanDemand = mean(Demand, na.rm = TRUE),
+    MedianDemand = median(Demand, na.rm = TRUE),
+    SD = sd(Demand, na.rm = TRUE),
+    MinDemand = min(Demand, na.rm = TRUE),
+    MaxDemand = max(Demand, na.rm = TRUE)
+  )
+
+# Print the summary
+print(demand_summary)
+```
+
+### 3. Visualization using ggplot2
+
+```{r Visualization ggplot2}
+
+#1. Demand Distribution Plot
+ggplot(data_clean, aes(x = Demand)) +
+  geom_histogram(bins = 150, fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Bike Demand", x = "Demand", y = "Count")
+
+# 2. Demand by Time of Day
+demand_by_time <- data_clean %>%
+  group_by(DemandTime) %>%
+  summarize(avg_demand = mean(Demand, na.rm = TRUE))
+
+ggplot(demand_by_time, aes(x = DemandTime, y = avg_demand)) +
+  geom_col(fill = "skyblue") +
+  labs(title = "Average Demand by Time of Day", x = "Time of Day", y = "Average Demand")
+
+# 3. demand by day of week
+ggplot(data_clean, aes(x = factor(DayOfWeek), y = Demand)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "Demand by Day of Week", x = "Day of Week", y = "Demand")
+
+# 4. Demand vs. Temperature
+ggplot(data_clean, aes(x = Temperature, y = Demand)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Demand vs. Temperature", x = "Temperature", y = "Demand")
+
+# 5. Demand vs. Precipitation
+
+ggplot(data_clean, aes(x = DailyPrecipitation, y = Demand)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Demand vs. Daily Precipitation", x = "Daily Precipitation", y = "Demand")
+
+library(maps)
+library(ggmap)
+
+# Create a data frame with station locations
+station_locations <- data_clean %>%
+  select(StartStationLatitude, StartStationLongitude, StartStationName) %>%
+  distinct() %>%
+  rename(Latitude = StartStationLatitude, Longitude = StartStationLongitude, StationName = StartStationName)
+
+# Get the map boundaries
+map_bounds <- c(left = min(station_locations$Longitude), right = max(station_locations$Longitude),
+                bottom = min(station_locations$Latitude), top = max(station_locations$Latitude))
+
+# Create a base map
+base_map <- get_map(location = map_bounds, source = "stadia", maptype = "toner")
+
+# Plot station locations on the map
+ggmap(base_map) +
+  geom_point(data = station_locations, aes(x = Longitude, y = Latitude), color = "red", size = 2) +
+  labs(title = "Station Locations")
+
+```
+
+### 4. Findings from Descriptive Analysis
+
+## 3. Predictive Analysis: Demand Forecast
+
+### 1. Logistic Regression Model
+
+```{r Linear Regression Model}
+
+str(data_clean)
+
+data_clean$DemandTime <- as.factor(data_clean$DemandTime)
+data_clean$StartStationId <- as.factor(data_clean$StartStationId)
+data_clean$EndStationId <- as.factor(data_clean$EndStationId)
+
+data_clean <- as.data.table(data_clean)
+
+str(data_clean)
+
+reg <- lm(Demand ~ DemandTime + StartStationId + EndStationId, data = data_clean)
+
+summary(reg)
+
+
+```
+
+### 3. Predict Future Demand for Daytime and Evening
+
+```{r}
+
+# Filter the new data for specific stations (assuming you have selected station IDs 3183, 3202, 3184, 3185, and 3187)
+selected_stations <- c(3674, 3671, 3631, 3680, 3673)
+
+
+# Split the data into daytime and evening
+daytime_data <- 
+  data.table(
+      DemandTime = 1,
+      StartStationId = c(3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673),
+      EndStationId = c(rep(3674, 5), rep(3671, 5), rep(3631, 5), rep(3680, 5), rep(3673, 5)),
+      Temperature = c(84, 84, 85, 85, 86, 86, 87, 87, 88, 88, 89, 89, 90, 90, 91, 91, 90, 80, 89, 89, 88, 87, 86, 84, 82),
+      DailyPrecipitation = 0,
+      DemandDate = as.Date("2018-09-06"),
+      DayOfWeek = 4,
+      Month = 9
+  )
+
+eveningtime_data <- 
+  data.table(
+      DemandTime = 2,
+      StartStationId = c(3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673, 3664, 3671, 3631, 3680, 3673),
+      EndStationId = c(rep(3674, 5), rep(3671, 5), rep(3631, 5), rep(3680, 5), rep(3673, 5)),
+      Temperature = c(rep(70, 12), rep(85, 13)),
+      DailyPrecipitation = 0,
+      DemandDate = as.Date("2018-09-06"),
+      DayOfWeek = 4,
+      Month = 9
+  )
+
+daytime_data <- daytime_data %>%
+  mutate(DemandTime = factor(DemandTime),
+         StartStationId = factor(StartStationId),
+         EndStationId = factor(EndStationId))
+
+eveningtime_data <- eveningtime_data %>%
+  mutate(DemandTime = factor(DemandTime),
+         StartStationId = factor(StartStationId),
+         EndStationId = factor(EndStationId))
+
+# Predict demand for daytime data
+daytime_data$PredictedDemand <- predict(reg, newdata = daytime_data)
+
+# Predict demand for evening data
+eveningtime_data$PredictedDemand <- predict(reg, newdata = eveningtime_data)
+
+eveningtime_data
+daytime_data
+```
